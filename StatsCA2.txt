@@ -1,0 +1,101 @@
+# Load necessary libraries
+library(tidyverse)
+
+# Load the datasets 
+impressions <- read_tsv("impressions.tsv")
+
+clicks <- read_tsv("clicks.tsv")
+
+advertiser <- read_csv("advertiser.csv")
+
+campaigns <- read_csv("campaigns.csv")
+
+# Define the function to transform date and time to UTC
+transform_to_utc <- function(date, time, timezone) {
+    # Define timezone offsets
+    timezone_offsets <- list("UTC" = 0, "Eastern time" = -5, "Pacific time" = -8)
+    
+    # Parse date using tibbles
+    date_tibble <- tibble(date = date) %>%
+        separate(date, into = c("day", "month", "year"), sep = "/")
+    
+    # Extract day, month, year as integers
+    day <- as.integer(date_tibble$day)
+    month <- as.integer(date_tibble$month)
+    year <- as.integer(date_tibble$year)
+    
+    # Parse time using tibbles
+    time_tibble <- tibble(time = time) %>%
+        separate(time, into = c("hour", "minute", "second"), sep = ":")
+    
+    # Extract hour, minute, second as integers
+    hour <- as.integer(time_tibble$hour)
+    minute <- as.integer(time_tibble$minute)
+    second <- as.integer(time_tibble$second)
+    
+    # Apply timezone offset
+    offset <- timezone_offsets[[timezone]]
+    adjusted_hour <- hour + offset  # Fix: Add offset instead of subtracting
+    
+    # Adjust for day transitions
+    if (adjusted_hour < 0) {
+        adjusted_hour <- adjusted_hour + 24
+        day <- day - 1
+    } else if (adjusted_hour >= 24) {
+        adjusted_hour <- adjusted_hour - 24
+        day <- day + 1
+    }
+    
+    # Adjust for month and year transitions
+    days_in_month <- c(31, 28 + ifelse((year %% 4 == 0 & year %% 100 != 0) | (year %% 400 == 0), 1, 0),
+                       31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    if (day < 1) {
+        month <- month - 1
+        if (month < 1) {
+            month <- 12
+            year <- year - 1
+        }
+        day <- days_in_month[month]
+    } else if (day > days_in_month[month]) {
+        day <- 1
+        month <- month + 1
+        if (month > 12) {
+            month <- 1
+            year <- year + 1
+        }
+    }
+    
+    # Format the adjusted datetime as "YYYY-MM-DD HH:MM:SS"
+    utc_date <- sprintf("%04d-%02d-%02d", year, month, day)
+    utc_time <- sprintf("%02d:%02d:%02d", adjusted_hour, minute, second)
+    paste(utc_date, utc_time)
+}
+
+# Prepare datasets with proper column naming from the start
+advertisers <- advertisers %>%
+    rename(advertiser_name = name) # Rename 'name' to 'advertiser_name'
+
+campaigns <- campaigns %>%
+    rename(campaign_name = name) # Rename 'name' to 'campaign_name'
+
+# Apply UTC transformation
+clicks <- clicks %>%
+    mutate(utc_datetime = mapply(transform_to_utc, date, time, timezone))
+
+impressions <- impressions %>%
+    mutate(utc_datetime = mapply(transform_to_utc, date, time, timezone))
+
+# Join the datasets
+campaigns_with_advertisers <- campaigns %>%
+    inner_join(advertisers, by = c("advertiser_id" = "ID"))
+
+clicks_processed <- clicks %>%
+    inner_join(campaigns_with_advertisers, by = c("campaign_id" = "id"))
+
+impressions_processed <- impressions %>%
+    inner_join(campaigns_with_advertisers, by = c("campaign_id" = "id"))
+
+# Save the processed data to CSV
+write_csv(clicks_processed, "clicks_processed.csv")
+write_csv(impressions_processed, "impressions_processed.csv")
+
